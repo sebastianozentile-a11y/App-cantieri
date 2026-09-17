@@ -1,0 +1,3821 @@
+package com.example.cantieri
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.text.method.PasswordTransformationMethod
+import android.text.method.HideReturnsTransformationMethod
+import android.graphics.Color
+import android.view.Gravity
+import android.view.View
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.storage.FirebaseStorage
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+
+data class Cantiere(
+    var id: String = "",
+    var nome: String = "",
+    var cliente: String = "",
+    var telefono: String = "",
+    var indirizzo: String = "",
+    var note: String = ""
+)
+
+data class RigaMateriale(
+    var descrizione: String = "",
+    var quantita: Double = 0.0,
+    var usata: Double = 0.0
+)
+
+class MainActivity : AppCompatActivity() {
+
+    private val auth = FirebaseAuth.getInstance()
+    private val db = FirebaseFirestore.getInstance()
+    private val storage = FirebaseStorage.getInstance()
+
+    private val azienda = "tecnoluce"
+    private val cantieri = mutableListOf<Pair<String, Cantiere>>()
+
+    private lateinit var list: LinearLayout
+
+    private var fotoCantiereId = ""
+    private var fotoList: LinearLayout? = null
+
+    private var allegatoBollaId = ""
+    private var allegatoBollaCantiereId = ""
+
+    private var fotoScansioneBolla: Uri? = null
+    private var scansioneBollaCantiereId: String = ""
+
+    private val yellow = 0xFFFFC107.toInt()
+    private val dark = 0xFF171717.toInt()
+    private val gray = 0xFF303030.toInt()
+    private val white = 0xFFFFFFFF.toInt()
+    private val lightGray = 0xFFCCCCCC.toInt()
+    private val green = 0xFF66BB6A.toInt()
+
+    private val selettoreFoto =
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.GetContent()
+        ) { uri ->
+            if (uri != null && fotoCantiereId.isNotBlank()) {
+                caricaFoto(fotoCantiereId, uri)
+            }
+        }
+
+    private val scattaBolla =
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.TakePicture()
+        ) { ok ->
+            if (ok && fotoScansioneBolla != null) {
+                analizzaBolla(fotoScansioneBolla!!)
+            }
+        }
+
+    private val selettoreAllegatoBolla =
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.GetContent()
+        ) { uri ->
+            if (uri != null && allegatoBollaId.isNotBlank()) {
+                caricaAllegatoBolla(
+                    allegatoBollaCantiereId,
+                    allegatoBollaId,
+                    uri
+                )
+            }
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        if (auth.currentUser == null) {
+            login()
+        } else {
+            verificaUtente()
+        }
+    }
+
+    private fun verificaUtente() {
+        val uid = auth.currentUser?.uid ?: return
+
+        db.collection("aziende")
+            .document(azienda)
+            .collection("dipendenti")
+            .document(uid)
+            .get()
+            .addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    home()
+
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Account non autorizzato per TECNO LUCE",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    auth.signOut()
+                    login()
+                }
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    "Errore verifica account: ${it.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+                auth.signOut()
+                login()
+            }
+    }
+
+    private fun login() {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        // Sfondo fotografico
+        val sfondo = ImageView(this).apply {
+            setImageResource(R.drawable.sfondo_login)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        root.addView(
+            sfondo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // Velo scuro per rendere leggibili i controlli
+        val velo = View(this).apply {
+            setBackgroundColor(0x99000000.toInt())
+        }
+
+        root.addView(
+            velo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            setPadding(dp(22), dp(28), dp(22), dp(24))
+        }
+
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.logo_tecnoluce)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+        }
+
+        contenuto.addView(
+            logo,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(155)
+            ).apply {
+                bottomMargin = dp(6)
+            }
+        )
+
+        val titolo = TextView(this).apply {
+            text = "CANTIERI"
+            textSize = 30f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+
+        contenuto.addView(
+            titolo,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(48)
+            ).apply {
+                bottomMargin = dp(18)
+            }
+        )
+
+        val email = EditText(this).apply {
+            hint = "Email"
+            textSize = 17f
+            setSingleLine(true)
+            setTextColor(Color.BLACK)
+            setHintTextColor(0xFF777777.toInt())
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(18), 0, dp(18), 0)
+        }
+
+        contenuto.addView(
+            email,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)
+            ).apply {
+                bottomMargin = 10
+            }
+        )
+
+        val passwordRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+
+        val password = EditText(this).apply {
+            hint = "Password"
+            textSize = 17f
+            setSingleLine(true)
+            inputType = 0x81
+            transformationMethod =
+                PasswordTransformationMethod.getInstance()
+            setTextColor(Color.BLACK)
+            setHintTextColor(0xFF777777.toInt())
+            setBackgroundColor(Color.TRANSPARENT)
+            setPadding(dp(18), 0, 0, 0)
+        }
+
+        passwordRow.addView(
+            password,
+            LinearLayout.LayoutParams(0, dp(56), 1f)
+        )
+
+        val mostraPassword = TextView(this).apply {
+            text = "👁"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setBackgroundColor(Color.TRANSPARENT)
+
+            setOnClickListener {
+                val posizione = password.selectionStart
+
+                if (password.transformationMethod == null) {
+                    password.transformationMethod =
+                        PasswordTransformationMethod.getInstance()
+                    text = "👁"
+                } else {
+                    password.transformationMethod =
+                        HideReturnsTransformationMethod.getInstance()
+                    text = "🙈"
+                }
+
+                password.setSelection(
+                    posizione.coerceIn(0, password.text.length)
+                )
+            }
+        }
+
+        passwordRow.addView(
+            mostraPassword,
+            LinearLayout.LayoutParams(dp(58), dp(56))
+        )
+
+        contenuto.addView(
+            passwordRow,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)
+            ).apply {
+                bottomMargin = dp(18)
+            }
+        )
+
+        val accedi = TextView(this).apply {
+            text = "ACCEDI"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFFFC400.toInt())
+                cornerRadius = dp(9).toFloat()
+            }
+
+            setOnClickListener {
+                val e = email.text.toString().trim()
+                val pw = password.text.toString()
+
+                if (e.isEmpty() || pw.isEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Inserisci email e password",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnClickListener
+                }
+
+                auth.signInWithEmailAndPassword(e, pw)
+                    .addOnSuccessListener {
+                        verificaUtente()
+                    }
+                    .addOnFailureListener {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Accesso non riuscito: ${it.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+            }
+        }
+
+        contenuto.addView(
+            accedi,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)
+            ).apply {
+                bottomMargin = 10
+            }
+        )
+
+        val crea = TextView(this).apply {
+            text = "CREA ACCOUNT"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0x22000000.toInt())
+                setStroke(dp(2), 0xFFFFC400.toInt())
+                cornerRadius = dp(9).toFloat()
+            }
+
+            setOnClickListener {
+                creaAccount()
+            }
+        }
+
+        contenuto.addView(
+            crea,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)
+            )
+        )
+
+        val contenutoParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+
+        root.addView(contenuto, contenutoParams)
+
+        setContentView(root)
+    }
+
+    private fun ascoltaCantieri() {
+        val db = FirebaseFirestore.getInstance()
+        db.collection("aziende")
+            .document("tecnoluce")
+            .collection("cantieri")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+
+                val lista = snapshot.documents.map { doc ->
+                    Cantiere(
+                        id = doc.id,
+                        nome = doc.getString("nome") ?: "",
+                        cliente = doc.getString("cliente") ?: "",
+                        telefono = doc.getString("telefono") ?: "",
+                        indirizzo = doc.getString("indirizzo") ?: "",
+                        note = doc.getString("note") ?: ""
+                    )
+                }
+
+            }
+    }
+
+    private fun creaAccount() {
+        val email = EditText(this).apply {
+            hint = "Email"
+            setSingleLine(true)
+        }
+
+        val password = EditText(this).apply {
+            hint = "Password"
+            setSingleLine(true)
+            inputType = 0x81
+        }
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 10, 40, 10)
+            addView(email)
+            addView(password)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Crea account")
+            .setView(layout)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("CREA") { _, _ ->
+                val e = email.text.toString().trim()
+                val p = password.text.toString()
+
+                if (e.isBlank() || p.length < 6) {
+                    Toast.makeText(
+                        this,
+                        "Inserisci email e una password di almeno 6 caratteri",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@setPositiveButton
+                }
+
+                auth.createUserWithEmailAndPassword(e, p)
+                    .addOnSuccessListener {
+                        Toast.makeText(
+                            this,
+                            "Account creato. Deve essere autorizzato dall'amministratore.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        auth.signOut()
+                        login()
+                    }
+                    .addOnFailureListener {
+                        Toast.makeText(
+                            this,
+                            "Errore creazione account: ${it.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+            }
+            .show()
+    }
+
+    private fun home() {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        // Sfondo villa a tutto schermo
+        val sfondo = ImageView(this).apply {
+            setImageResource(R.drawable.sfondo_villa)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        root.addView(
+            sfondo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // Oscuramento leggero
+        val velo = View(this).apply {
+            setBackgroundColor(0x88000000.toInt())
+        }
+
+        root.addView(
+            velo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // Contenuto sicuro rispetto alle barre del telefono
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(10), dp(18), dp(18))
+        }
+
+        val intestazione = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.logo_tecnoluce)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+        }
+
+        intestazione.addView(
+            logo,
+            LinearLayout.LayoutParams(
+                dp(230),
+                dp(68)
+            )
+        )
+
+        contenuto.addView(
+            intestazione,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(68)
+            ).apply {
+                bottomMargin = dp(12)
+            }
+        )
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val lista = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        scroll.addView(lista)
+
+        contenuto.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        root.addView(
+            contenuto,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // Pulsante + sempre sopra la barra di navigazione
+        val aggiungi = TextView(this).apply {
+            text = "+"
+            textSize = 32f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0xFFFFC400.toInt())
+            }
+
+            elevation = dp(10).toFloat()
+
+            setOnClickListener {
+                nuovoCantiere()
+            }
+        }
+
+        val plusParams = FrameLayout.LayoutParams(
+            dp(64),
+            dp(64)
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            setMargins(0, 0, dp(20), dp(20))
+        }
+
+        root.addView(aggiungi, plusParams)
+
+        // Gestione automatica notch, fotocamera e barra di navigazione
+        root.setOnApplyWindowInsetsListener { _, insets ->
+
+            val barre = insets.getInsets(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars()
+            )
+
+            contenuto.setPadding(
+                dp(18),
+                barre.top + dp(10),
+                dp(18),
+                barre.bottom + dp(18)
+            )
+
+            plusParams.bottomMargin = barre.bottom + dp(20)
+            aggiungi.layoutParams = plusParams
+
+            insets
+        }
+
+        setContentView(root)
+        root.requestApplyInsets()
+
+        // Aggiornamento in tempo reale dei cantieri
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .addSnapshotListener { snap, e ->
+
+                lista.removeAllViews()
+
+                if (e != null) {
+                    Toast.makeText(
+                        this,
+                        "Errore caricamento cantieri",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@addSnapshotListener
+                }
+
+                snap?.documents?.forEach { doc ->
+
+                    val c = Cantiere(
+                        id = doc.id,
+                        nome = doc.getString("nome") ?: "",
+                        cliente = doc.getString("cliente") ?: "",
+                        telefono = doc.getString("telefono") ?: "",
+                        indirizzo = doc.getString("indirizzo") ?: "",
+                        note = doc.getString("note") ?: ""
+                    )
+
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(
+                            dp(20),
+                            dp(16),
+                            dp(20),
+                            dp(16)
+                        )
+
+                        background =
+                            android.graphics.drawable.GradientDrawable().apply {
+                                setColor(0xDD111111.toInt())
+                                cornerRadius = dp(18).toFloat()
+                                setStroke(
+                                    dp(2),
+                                    0xFFFFC400.toInt()
+                                )
+                            }
+
+                        setOnClickListener {
+                            dettaglioCantiere(c.id, c)
+                        }
+                    }
+
+                    val nome = TextView(this).apply {
+                        text = c.nome
+                        textSize = 21f
+                        setTextColor(0xFFFFC400.toInt())
+                        setTypeface(
+                            null,
+                            android.graphics.Typeface.BOLD
+                        )
+                    }
+
+                    card.addView(nome)
+
+                    if (c.cliente.isNotBlank()) {
+                        val cliente = TextView(this).apply {
+                            text = "Cliente: ${c.cliente}"
+                            textSize = 16f
+                            setTextColor(Color.WHITE)
+                        }
+
+                        card.addView(cliente)
+                    }
+
+                    if (c.indirizzo.isNotBlank()) {
+                        val indirizzo = TextView(this).apply {
+                            text = "📍 ${c.indirizzo}"
+                            textSize = 14f
+                            setTextColor(0xFFDDDDDD.toInt())
+                        }
+
+                        card.addView(indirizzo)
+                    }
+
+                    val margini = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = dp(14)
+                    }
+
+                    lista.addView(card, margini)
+                }
+            }
+    }
+
+    private fun nuovoCantiere() {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), dp(8))
+        }
+
+        val titolo = TextView(this).apply {
+            text = "NUOVO CANTIERE"
+            textSize = 22f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(18))
+        }
+
+        val nome = campo("Nome cantiere")
+        val cliente = campo("Cliente")
+        val telefono = campo("Telefono")
+        val indirizzo = campo("Indirizzo")
+        val note = campo("Note")
+
+        layout.addView(titolo)
+        layout.addView(nome)
+        layout.addView(cliente)
+        layout.addView(telefono)
+        layout.addView(indirizzo)
+        layout.addView(note)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(layout)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("SALVA", null)
+            .create()
+
+        dialog.setOnShowListener {
+
+            dialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(
+                    Color.parseColor("#171717")
+                )
+            )
+
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).apply {
+                setTextColor(Color.WHITE)
+                textSize = 15f
+            }
+
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).apply {
+                setTextColor(Color.parseColor("#FFC400"))
+                textSize = 15f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+
+                setOnClickListener {
+
+                    val n = nome.text.toString().trim()
+
+                    if (n.isEmpty()) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Inserisci il nome del cantiere",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@setOnClickListener
+                    }
+
+                    salvaCantiere(
+                        Cantiere(
+                            nome = n,
+                            cliente = cliente.text.toString().trim(),
+                            telefono = telefono.text.toString().trim(),
+                            indirizzo = indirizzo.text.toString().trim(),
+                            note = note.text.toString().trim()
+                        )
+                    )
+
+                    dialog.dismiss()
+                }
+            }
+        }
+
+        dialog.show()
+
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92).toInt(),
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun campo(hintText: String): EditText {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        return EditText(this).apply {
+
+            hint = hintText
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#AAAAAA"))
+            setSingleLine(hintText != "Note")
+            gravity = Gravity.CENTER_VERTICAL
+
+            setPadding(
+                dp(16),
+                dp(4),
+                dp(16),
+                dp(4)
+            )
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.parseColor("#242424"))
+                setStroke(
+                    dp(1),
+                    Color.parseColor("#555555")
+                )
+                cornerRadius = dp(12).toFloat()
+            }
+
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                if (hintText == "Note") dp(90) else dp(54)
+            ).apply {
+                bottomMargin = 10
+            }
+        }
+    }
+
+    private fun salvaCantiere(c: Cantiere) {
+        val dati = hashMapOf(
+            "nome" to c.nome,
+            "cliente" to c.cliente,
+            "telefono" to c.telefono,
+            "indirizzo" to c.indirizzo,
+            "note" to c.note,
+            "timestamp" to System.currentTimeMillis()
+        )
+
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .add(dati)
+            .addOnSuccessListener {
+                Toast.makeText(
+                    this,
+                    "Cantiere salvato nel cloud",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    "Errore salvataggio: ${it.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun modificaCantiere(id: String, c: Cantiere) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(25, 10, 25, 5)
+        }
+
+        val nome = campo("Nome cantiere")
+        val cliente = campo("Cliente")
+        val telefono = campo("Telefono")
+        val indirizzo = campo("Indirizzo")
+        val note = campo("Note")
+
+        nome.setText(c.nome)
+        cliente.setText(c.cliente)
+        telefono.setText(c.telefono)
+        indirizzo.setText(c.indirizzo)
+        note.setText(c.note)
+
+        listOf(nome, cliente, telefono, indirizzo, note).forEach {
+            layout.addView(it)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("MODIFICA CANTIERE")
+            .setView(layout)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("SALVA", null)
+            .create()
+            .also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener {
+
+                            val nuovoNome = nome.text.toString().trim()
+
+                            if (nuovoNome.isEmpty()) {
+                                Toast.makeText(
+                                    this,
+                                    "Inserisci il nome del cantiere",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@setOnClickListener
+                            }
+
+                            val dati = hashMapOf<String, Any>(
+                                "nome" to nuovoNome,
+                                "cliente" to cliente.text.toString().trim(),
+                                "telefono" to telefono.text.toString().trim(),
+                                "indirizzo" to indirizzo.text.toString().trim(),
+                                "note" to note.text.toString().trim(),
+                                "timestamp" to System.currentTimeMillis()
+                            )
+
+                            db.collection("aziende")
+                                .document(azienda)
+                                .collection("cantieri")
+                                .document(id)
+                                .update(dati)
+                                .addOnSuccessListener {
+                                    dialog.dismiss()
+                                    dettaglioCantiere(
+                                        id,
+                                        Cantiere(
+                                            nuovoNome,
+                                            cliente.text.toString().trim(),
+                                            telefono.text.toString().trim(),
+                                            indirizzo.text.toString().trim(),
+                                            note.text.toString().trim()
+                                        )
+                                    )
+                                }
+                                .addOnFailureListener {
+                                    Toast.makeText(
+                                        this,
+                                        "Errore aggiornamento: ${it.message}",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                        }
+                }
+                dialog.show()
+            }
+    }
+
+    private fun dettaglioCantiere(id: String, c: Cantiere) {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        val indietro = TextView(this).apply {
+            text = "←  TORNA A FOTO E BOLLE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xDD303030.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            setOnClickListener {
+                fotoCantiere(id)
+            }
+        }
+
+        val sfondo = ImageView(this).apply {
+            setImageResource(R.drawable.sfondo_villa)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        root.addView(
+            sfondo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val velo = View(this).apply {
+            setBackgroundColor(0xAA000000.toInt())
+        }
+
+        root.addView(
+            velo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        root.addView(
+            indietro,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                gravity = Gravity.TOP
+                leftMargin = dp(18)
+                rightMargin = dp(18)
+                topMargin = dp(18)
+            }
+        )
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(30))
+        }
+
+        val titolo = TextView(this).apply {
+            text = c.nome
+            textSize = 27f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(20))
+        }
+
+        contenuto.addView(titolo)
+
+        val informazioni = TextView(this).apply {
+            text = buildString {
+                append("CLIENTE\n")
+                append(if (c.cliente.isBlank()) "—" else c.cliente)
+                append("\n\nTELEFONO\n")
+                append(if (c.telefono.isBlank()) "—" else c.telefono)
+                append("\n\nINDIRIZZO\n")
+                append(if (c.indirizzo.isBlank()) "—" else c.indirizzo)
+                if (c.note.isNotBlank()) {
+                    append("\n\nNOTE\n")
+                    append(c.note)
+                }
+            }
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xDD202020.toInt())
+                setStroke(dp(1), 0x66FFC400)
+                cornerRadius = dp(14).toFloat()
+            }
+        }
+
+        contenuto.addView(
+            informazioni,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(18)
+            }
+        )
+
+        fun aggiungiPulsante(testo: String, azione: () -> Unit) {
+            val b = TextView(this).apply {
+                text = testo
+                textSize = 16f
+                gravity = Gravity.CENTER_VERTICAL
+                setTextColor(Color.WHITE)
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(dp(18), 0, dp(18), 0)
+
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xDD242424.toInt())
+                    setStroke(dp(1), 0x99FFC400.toInt())
+                    cornerRadius = dp(13).toFloat()
+                }
+
+                elevation = dp(3).toFloat()
+                setOnClickListener { azione() }
+            }
+
+            contenuto.addView(
+                b,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(58)
+                ).apply {
+                    bottomMargin = dp(11)
+                }
+            )
+        }
+
+        aggiungiPulsante("📞   CHIAMA CLIENTE") {
+            if (c.telefono.isNotBlank()) {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_DIAL,
+                        Uri.parse("tel:${c.telefono}")
+                    )
+                )
+            } else {
+                Toast.makeText(
+                    this,
+                    "Numero di telefono non presente",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        aggiungiPulsante("📍   NAVIGA") {
+            if (c.indirizzo.isNotBlank()) {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("geo:0,0?q=${Uri.encode(c.indirizzo)}")
+                    )
+                )
+            } else {
+                Toast.makeText(
+                    this,
+                    "Indirizzo non presente",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        aggiungiPulsante("📷   FOTO") {
+            mostraFotoCantiere(id)
+        }
+
+        aggiungiPulsante("📄   BOLLE E NOTE MATERIALE") {
+            fotoCantiere(id)
+        }
+
+        aggiungiPulsante("🏭   MAGAZZINO AZIENDALE") {
+            magazzino(id)
+        }
+
+        aggiungiPulsante("✏️   MODIFICA PROFILO") {
+            modificaCantiere(id, c)
+        }
+
+        val elimina = TextView(this).apply {
+            text = "🗑️   ELIMINA CANTIERE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#FF7777"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(8))
+
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Eliminare il cantiere?")
+                    .setMessage(c.nome)
+                    .setNegativeButton("ANNULLA", null)
+                    .setPositiveButton("ELIMINA") { _, _ ->
+                        db.collection("aziende")
+                            .document(azienda)
+                            .collection("cantieri")
+                            .document(id)
+                            .delete()
+                            .addOnSuccessListener {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Cantiere eliminato",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                home()
+                            }
+                            .addOnFailureListener {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Errore eliminazione: ${it.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                    }
+                    .show()
+            }
+        }
+
+        contenuto.addView(
+            elimina,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                topMargin = dp(8)
+            }
+        )
+
+        val torna = TextView(this).apply {
+            text = "←  TORNA AI CANTIERI"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0x44242424.toInt())
+                setStroke(dp(1), 0x66FFFFFF)
+                cornerRadius = dp(12).toFloat()
+            }
+            setOnClickListener {
+                home()
+            }
+        }
+
+        contenuto.addView(
+            torna,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                topMargin = dp(6)
+            }
+        )
+
+        scroll.addView(contenuto)
+
+        root.addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        setContentView(root)
+    }
+
+    // ----------------------------------------------------------------
+    // FOTO
+    // ----------------------------------------------------------------
+
+
+    private fun mostraFotoCantiere(id: String) {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        root.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.sfondo_villa)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        root.addView(
+            View(this).apply {
+                setBackgroundColor(0xAA000000.toInt())
+            },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(100))
+        }
+
+        contenuto.addView(TextView(this).apply {
+            text = "📷  FOTO"
+            textSize = 27f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(20))
+        })
+
+        fun pulsante(testo: String, azione: () -> Unit): TextView {
+            return TextView(this).apply {
+                text = testo
+                textSize = 16f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xDD242424.toInt())
+                    setStroke(dp(1), 0x99FFC400.toInt())
+                    cornerRadius = dp(13).toFloat()
+                }
+                elevation = dp(3).toFloat()
+                setOnClickListener { azione() }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(58)
+                ).apply {
+                    bottomMargin = dp(11)
+                }
+            }
+        }
+
+        contenuto.addView(
+            pulsante("🖼️   AGGIUNGI FOTO") {
+                selettoreFoto.launch("image/*")
+            }
+        )
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val lista = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(90))
+        }
+
+        scroll.addView(lista)
+
+        contenuto.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        root.addView(
+            contenuto,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val torna = TextView(this).apply {
+            text = "←  TORNA AL CANTIERE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xEE242424.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            elevation = dp(8).toFloat()
+
+            setOnClickListener {
+                val cantiere = cantieri.firstOrNull { it.first == id }
+
+                if (cantiere != null) {
+                    dettaglioCantiere(id, cantiere.second)
+                } else {
+                    home()
+                }
+            }
+        }
+
+        val tornaParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            dp(54)
+        ).apply {
+            gravity = Gravity.BOTTOM
+            leftMargin = dp(18)
+            rightMargin = dp(18)
+            bottomMargin = dp(18)
+        }
+
+        root.addView(torna, tornaParams)
+
+        root.setOnApplyWindowInsetsListener { _, insets ->
+
+            val barre = insets.getInsets(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars()
+            )
+
+            contenuto.setPadding(
+                dp(18),
+                barre.top + dp(10),
+                dp(18),
+                barre.bottom + dp(90)
+            )
+
+            tornaParams.bottomMargin = barre.bottom + dp(14)
+            torna.layoutParams = tornaParams
+
+            insets
+        }
+
+        setContentView(root)
+        root.requestApplyInsets()
+
+        ascoltaFotoSolo(id, lista)
+    }
+
+    private fun fotoCantiere(id: String) {
+        fotoCantiereId = id
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        val sfondo = ImageView(this).apply {
+            setImageResource(R.drawable.sfondo_villa)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        root.addView(
+            sfondo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val velo = View(this).apply {
+            setBackgroundColor(0xAA000000.toInt())
+        }
+
+        root.addView(
+            velo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(90))
+        }
+
+        val titolo = TextView(this).apply {
+            text = "📄  BOLLE E NOTE MATERIALE"
+            textSize = 27f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(20))
+        }
+
+        contenuto.addView(titolo)
+
+        fun pulsante(testo: String, azione: () -> Unit): TextView {
+            return TextView(this).apply {
+                text = testo
+                textSize = 16f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xDD242424.toInt())
+                    setStroke(dp(1), 0x99FFC400.toInt())
+                    cornerRadius = dp(13).toFloat()
+                }
+                elevation = dp(3).toFloat()
+                setOnClickListener { azione() }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(58)
+                ).apply {
+                    bottomMargin = dp(11)
+                }
+            }
+        }
+
+        contenuto.addView(
+            pulsante("🖼️   AGGIUNGI FOTO") {
+                selettoreFoto.launch("image/*")
+            }
+        )
+
+        contenuto.addView(
+            pulsante("📄   NUOVA BOLLA") {
+                nuovaBolla(id)
+            }
+        )
+
+        contenuto.addView(
+            pulsante("📦   PRELEVA DAL MAGAZZINO") {
+                val cantiere = cantieri.firstOrNull { it.first == id }
+
+                if (cantiere != null) {
+                    prelevaMagazzino(id, cantiere.second)
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Cantiere non trovato",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        )
+
+        contenuto.addView(
+            pulsante("📋   MATERIALI UTILIZZATI") {
+                materialiUtilizzati(id)
+            }
+        )
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val lista = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(90))
+        }
+
+        fotoList = lista
+        scroll.addView(lista)
+
+        contenuto.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        root.addView(
+            contenuto,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val torna = TextView(this).apply {
+            text = "←  TORNA AL CANTIERE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xEE242424.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            elevation = dp(8).toFloat()
+
+            setOnClickListener {
+                val cantiere = cantieri.firstOrNull { it.first == id }
+
+                if (cantiere != null) {
+                    dettaglioCantiere(id, cantiere.second)
+                } else {
+                    home()
+                }
+            }
+        }
+
+        val tornaParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            dp(54)
+        ).apply {
+            gravity = Gravity.BOTTOM
+            leftMargin = dp(18)
+            rightMargin = dp(18)
+            bottomMargin = dp(18)
+        }
+
+        root.addView(torna, tornaParams)
+
+        root.setOnApplyWindowInsetsListener { _, insets ->
+
+            val barre = insets.getInsets(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars()
+            )
+
+            contenuto.setPadding(
+                dp(18),
+                barre.top + dp(10),
+                dp(18),
+                barre.bottom + dp(90)
+            )
+
+            tornaParams.bottomMargin = barre.bottom + dp(14)
+            torna.layoutParams = tornaParams
+
+            insets
+        }
+
+        setContentView(root)
+        root.requestApplyInsets()
+
+        ascoltaFoto(id)
+        ascoltaBolle(id)
+    }
+
+    private fun caricaFoto(id: String, uri: Uri) {
+        val nome = "foto_${System.currentTimeMillis()}"
+
+        val riferimento = storage.reference
+            .child("aziende")
+            .child(azienda)
+            .child("cantieri")
+            .child(id)
+            .child("foto")
+            .child(nome)
+
+        Toast.makeText(
+            this,
+            "Caricamento foto...",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        riferimento.putFile(uri)
+            .continueWithTask { task ->
+                if (!task.isSuccessful) {
+                    throw task.exception ?: Exception("Errore caricamento")
+                }
+                riferimento.downloadUrl
+            }
+            .addOnSuccessListener { downloadUri ->
+                db.collection("aziende")
+                    .document(azienda)
+                    .collection("cantieri")
+                    .document(id)
+                    .collection("foto")
+                    .add(
+                        hashMapOf(
+                            "url" to downloadUri.toString(),
+                            "nome" to nome,
+                            "tipo" to "foto",
+                            "timestamp" to System.currentTimeMillis()
+                        )
+                    )
+                    .addOnSuccessListener {
+                        Toast.makeText(
+                            this,
+                            "Foto salvata nel cloud",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    "Errore foto: ${it.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun ascoltaFoto(id: String) {
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(id)
+            .collection("foto")
+            .addSnapshotListener { snapshot, error ->
+
+                if (error != null) return@addSnapshotListener
+
+                val container = fotoList ?: return@addSnapshotListener
+
+                snapshot?.documents?.forEach { doc ->
+                    if (doc.getString("tipo") == "foto") {
+                        // Le foto vengono ricostruite insieme alle bolle
+                        // nella funzione di visualizzazione.
+                    }
+                }
+            }
+    }
+
+    // ----------------------------------------------------------------
+    // BOLLE
+    // ----------------------------------------------------------------
+
+    private fun analizzaBolla(uri: Uri) {
+
+        Toast.makeText(
+            this,
+            "Lettura della bolla in corso...",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        try {
+            val image = InputImage.fromFilePath(this, uri)
+
+            val recognizer = TextRecognition.getClient(
+                TextRecognizerOptions.DEFAULT_OPTIONS
+            )
+
+            recognizer.process(image)
+                .addOnSuccessListener { result ->
+
+                    val testo = result.text
+
+                    if (testo.isBlank()) {
+                        Toast.makeText(
+                            this,
+                            "Non riesco a leggere il testo della bolla.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        return@addOnSuccessListener
+                    }
+
+                    Toast.makeText(
+                        this,
+                        "Bolla letta correttamente.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+
+                    mostraBollaDaTesto(
+                        fotoScansioneBolla,
+                        testo
+                    )
+                }
+                .addOnFailureListener { errore ->
+
+                    Toast.makeText(
+                        this,
+                        "Errore lettura bolla: ${errore.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                .addOnCompleteListener {
+                    recognizer.close()
+                }
+
+        } catch (e: Exception) {
+
+            Toast.makeText(
+                this,
+                "Errore apertura foto: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun mostraBollaDaTesto(
+        uri: Uri?,
+        testo: String
+    ) {
+
+        val righeTesto = testo
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        var numero = ""
+        var data = ""
+        var fornitore = ""
+
+        // Cerca un numero di bolla.
+        val regexNumero = Regex(
+            "(?i)(?:bolla|documento|ddt|n\\.?)[^0-9]{0,10}([0-9]{2,})"
+        )
+
+        numero = regexNumero.find(testo)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: ""
+
+        // Cerca una data nei formati più comuni.
+        val regexData = Regex(
+            "\\b([0-3]?\\d[./-][01]?\\d[./-](?:20)?\\d{2})\\b"
+        )
+
+        data = regexData.find(testo)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: ""
+
+        // Cerca una riga che potrebbe contenere il fornitore.
+        val paroleFornitore = listOf(
+            "fornitore",
+            "ditta",
+            "società",
+            "srl",
+            "s.r.l.",
+            "spa",
+            "s.p.a."
+        )
+
+        for (riga in righeTesto) {
+            val lower = riga.lowercase()
+
+            if (paroleFornitore.any { lower.contains(it) }) {
+                fornitore = riga
+                    .substringAfter(":")
+                    .trim()
+
+                if (fornitore.isBlank()) {
+                    fornitore = riga.trim()
+                }
+
+                break
+            }
+        }
+
+        // Riconoscimento materiali:
+        // accettiamo solo righe con una quantità accompagnata da una
+        // unità tipica di materiale. In questo modo CAP, indirizzi,
+        // telefoni e numeri civici non vengono scambiati per materiali.
+
+        val materiali = mutableListOf<RigaMateriale>()
+
+        val regexMateriale = Regex(
+            """(?i)^\s*(?:([0-9]+(?:[.,][0-9]+)?)\s*(pz|pzi|pezzi|nr|n\.|kg|g|mt|m|ml|lt|l|mm|cm|m2|mq|m3|h)\s+(.+?)|(.+?)\s+([0-9]+(?:[.,][0-9]+)?)\s*(pz|pzi|pezzi|nr|n\.|kg|g|mt|m|ml|lt|l|mm|cm|m2|mq|m3|h))\s*$"""
+        )
+
+        val paroleDaIgnorare = listOf(
+            "via ", "viale ", "piazza ", "corso ", "strada ",
+            "vicolo ", "largo ", "località ", "loc. ",
+            "cap ", "tel", "telefono", "fax", "email", "@",
+            "p.iva", "partita iva", "codice fiscale",
+            "cliente", "destinazione", "indirizzo", "sede",
+            "città", "comune", "provincia", "nato",
+            "www.", "http", "pec", "trento", "milano",
+            "roma", "verona", "bolzano"
+        )
+
+        val province = listOf(
+            "(tn)", "(bz)", "(mi)", "(vr)", "(vi)", "(pd)",
+            "(tv)", "(bl)", "(ve)", "(ro)", "(bs)", "(bg)",
+            "(mn)", "(bo)", "(mo)", "(re)", "(pr)"
+        )
+
+        for (riga in righeTesto) {
+
+            val rigaPulita = riga.trim()
+            val lower = rigaPulita.lowercase()
+
+            if (rigaPulita.isBlank()) continue
+
+            if (paroleDaIgnorare.any { lower.contains(it) }) continue
+            if (province.any { lower.contains(it) }) continue
+
+            // Scarta CAP, telefoni e codici lunghi.
+            if (Regex("""\d{5,}""").containsMatchIn(rigaPulita)) continue
+
+            val match = regexMateriale.find(rigaPulita) ?: continue
+
+            var quantita = 0.0
+            var descrizione = ""
+
+            if (match.groupValues[1].isNotBlank()) {
+                quantita = match.groupValues[1]
+                    .replace(",", ".")
+                    .toDoubleOrNull() ?: 0.0
+
+                descrizione = match.groupValues[3].trim()
+            } else {
+                descrizione = match.groupValues[4].trim()
+
+                quantita = match.groupValues[5]
+                    .replace(",", ".")
+                    .toDoubleOrNull() ?: 0.0
+            }
+
+            descrizione = descrizione
+                .trim('-', '–', ':', '.', ' ')
+
+            if (quantita <= 0 || descrizione.isBlank()) continue
+
+            // La descrizione deve contenere almeno una parola.
+            if (!Regex("""[A-Za-zÀ-ÖØ-öø-ÿ]{2,}""").containsMatchIn(descrizione)) {
+                continue
+            }
+
+            materiali.add(
+                RigaMateriale(
+                    descrizione = descrizione,
+                    quantita = quantita,
+                    usata = 0.0
+                )
+            )
+        }
+
+        mostraModificaBolla(
+            numero,
+            data,
+            fornitore,
+            materiali,
+            uri
+        )
+    }
+
+    private fun mostraModificaBolla(
+        numeroIniziale: String,
+        dataIniziale: String,
+        fornitoreIniziale: String,
+        materialiIniziali: List<RigaMateriale>,
+        uri: Uri?
+    ) {
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 10, 20, 10)
+            setBackgroundColor(dark)
+        }
+
+        val numero = campo("Numero bolla").apply {
+            setText(numeroIniziale)
+        }
+
+        val data = campo("Data").apply {
+            setText(dataIniziale)
+        }
+
+        val fornitore = campo("Fornitore").apply {
+            setText(fornitoreIniziale)
+        }
+
+        layout.addView(numero)
+        layout.addView(data)
+        layout.addView(fornitore)
+
+        layout.addView(TextView(this).apply {
+            text = "MATERIALI RICONOSCIUTI"
+            textSize = 18f
+            setTextColor(yellow)
+            setPadding(0, 15, 0, 8)
+        })
+
+        val materialiContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        layout.addView(materialiContainer)
+
+        val righe = mutableListOf<Pair<EditText, EditText>>()
+
+        fun aggiungiRiga(
+            descrizioneIniziale: String = "",
+            quantitaIniziale: String = ""
+        ) {
+
+            val riga = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+
+            val materiale = campo("Materiale").apply {
+                setText(descrizioneIniziale)
+            }
+
+            val quantita = campo("Quantità").apply {
+                setText(quantitaIniziale)
+            }
+
+            materiale.layoutParams =
+                LinearLayout.LayoutParams(0, 68, 2.2f).apply {
+                    rightMargin = 6
+                }
+
+            quantita.layoutParams =
+                LinearLayout.LayoutParams(0, 68, 1f)
+
+            riga.addView(materiale)
+            riga.addView(quantita)
+
+            materialiContainer.addView(
+                riga,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = 10
+                }
+            )
+            righe.add(materiale to quantita)
+        }
+
+        if (materialiIniziali.isEmpty()) {
+            aggiungiRiga()
+        } else {
+            materialiIniziali.forEach {
+                aggiungiRiga(
+                    it.descrizione,
+                    formatta(it.quantita)
+                )
+            }
+        }
+
+        layout.addView(Button(this).apply {
+            text = "➕ AGGIUNGI MATERIALE"
+            setOnClickListener {
+                aggiungiRiga()
+            }
+        })
+
+        val scroll = ScrollView(this)
+        scroll.addView(layout)
+
+        AlertDialog.Builder(this)
+            .setTitle("CONTROLLA BOLLA")
+            .setView(scroll)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("SALVA BOLLA", null)
+            .create()
+            .also { dialog ->
+
+                dialog.setOnShowListener {
+
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener {
+
+                            val materiali = mutableListOf<RigaMateriale>()
+
+                            righe.forEach { (desc, qta) ->
+
+                                val d = desc.text.toString().trim()
+
+                                val q = qta.text.toString()
+                                    .trim()
+                                    .replace(",", ".")
+                                    .toDoubleOrNull()
+
+                                if (
+                                    d.isNotBlank() &&
+                                    q != null &&
+                                    q > 0
+                                ) {
+                                    materiali.add(
+                                        RigaMateriale(
+                                            descrizione = d,
+                                            quantita = q,
+                                            usata = 0.0
+                                        )
+                                    )
+                                }
+                            }
+
+                            if (
+                                numero.text.toString()
+                                    .trim()
+                                    .isEmpty()
+                            ) {
+                                Toast.makeText(
+                                    this,
+                                    "Inserisci il numero della bolla",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@setOnClickListener
+                            }
+
+                            if (materiali.isEmpty()) {
+                                Toast.makeText(
+                                    this,
+                                    "Inserisci almeno un materiale",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@setOnClickListener
+                            }
+
+                            salvaBolla(
+                                scansioneBollaCantiereId,
+                                numero.text.toString().trim(),
+                                data.text.toString().trim(),
+                                fornitore.text.toString().trim(),
+                                materiali
+                            )
+
+                            dialog.dismiss()
+                        }
+                }
+
+                dialog.show()
+            }
+    }
+
+    private fun nuovaBolla(cantiereId: String) {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        val sfondo = ImageView(this).apply {
+            setImageResource(R.drawable.sfondo_villa)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        root.addView(
+            sfondo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val velo = View(this).apply {
+            setBackgroundColor(0xAA000000.toInt())
+        }
+
+        root.addView(
+            velo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(100))
+        }
+
+        fun campoModerno(
+            hintText: String,
+            altezza: Int = 54
+        ): EditText {
+            return EditText(this).apply {
+                hint = hintText
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.parseColor("#AAAAAA"))
+                setSingleLine(true)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), 0)
+
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xE6242424.toInt())
+                    setStroke(dp(1), 0x99555555.toInt())
+                    cornerRadius = dp(12).toFloat()
+                }
+
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(altezza)
+                ).apply {
+                    bottomMargin = 10
+                }
+            }
+        }
+
+        val titolo = TextView(this).apply {
+            text = "📄  NUOVA BOLLA"
+            textSize = 27f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(18))
+        }
+
+        layout.addView(titolo)
+
+        val descrizione = TextView(this).apply {
+            text = "Inserisci i dati manualmente oppure scansiona la bolla"
+            textSize = 14f
+            setTextColor(Color.parseColor("#DDDDDD"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(14))
+        }
+
+        layout.addView(descrizione)
+
+        val scansione = TextView(this).apply {
+            text = "📷   SCANSIONA BOLLA"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.parseColor("#FFC400"))
+                cornerRadius = dp(13).toFloat()
+            }
+
+            elevation = dp(4).toFloat()
+
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(58)
+            ).apply {
+                bottomMargin = dp(18)
+            }
+
+            setOnClickListener {
+                scansioneBollaCantiereId = cantiereId
+
+                val file = java.io.File(
+                    cacheDir,
+                    "bolla_${System.currentTimeMillis()}.jpg"
+                )
+
+                fotoScansioneBolla =
+                    androidx.core.content.FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "${packageName}.fileprovider",
+                        file
+                    )
+
+                scattaBolla.launch(fotoScansioneBolla)
+            }
+        }
+
+        layout.addView(scansione)
+
+        val numero = campoModerno("Numero bolla")
+        val data = campoModerno("Data")
+        val fornitore = campoModerno("Fornitore")
+
+        layout.addView(numero)
+        layout.addView(data)
+        layout.addView(fornitore)
+
+        layout.addView(TextView(this).apply {
+            text = "MATERIALI"
+            textSize = 19f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(12), 0, dp(8))
+        })
+
+        val materialiContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        layout.addView(materialiContainer)
+
+        val righe = mutableListOf<Pair<EditText, EditText>>()
+
+        fun aggiungiRiga() {
+
+            val riga = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val materiale = campoModerno("Materiale", 64)
+            val quantita = campoModerno("Quantità", 64)
+
+            materiale.layoutParams =
+                LinearLayout.LayoutParams(0, dp(64), 2.2f).apply {
+                    rightMargin = 6
+                }
+
+            quantita.layoutParams =
+                LinearLayout.LayoutParams(0, dp(64), 1f)
+
+            riga.addView(materiale)
+            riga.addView(quantita)
+
+            materialiContainer.addView(
+                riga,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(8)
+                }
+            )
+
+            righe.add(materiale to quantita)
+        }
+
+        aggiungiRiga()
+
+        val aggiungi = TextView(this).apply {
+            text = "＋  AGGIUNGI MATERIALE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xDD303030.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(12).toFloat()
+            }
+
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(18)
+            }
+
+            setOnClickListener {
+                aggiungiRiga()
+            }
+        }
+
+        layout.addView(aggiungi)
+
+        val salva = TextView(this).apply {
+            text = "✓  SALVA BOLLA"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.parseColor("#FFC400"))
+                cornerRadius = dp(13).toFloat()
+            }
+
+            elevation = dp(4).toFloat()
+
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(58)
+            )
+
+            setOnClickListener {
+
+                val materiali = mutableListOf<RigaMateriale>()
+
+                righe.forEach { (desc, qta) ->
+
+                    val d = desc.text.toString().trim()
+
+                    val q = qta.text.toString()
+                        .trim()
+                        .replace(",", ".")
+                        .toDoubleOrNull()
+
+                    if (
+                        d.isNotBlank() &&
+                        q != null &&
+                        q > 0
+                    ) {
+                        materiali.add(
+                            RigaMateriale(
+                                descrizione = d,
+                                quantita = q,
+                                usata = 0.0
+                            )
+                        )
+                    }
+                }
+
+                if (numero.text.toString().trim().isEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Inserisci il numero della bolla",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnClickListener
+                }
+
+                if (materiali.isEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Inserisci almeno un materiale",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnClickListener
+                }
+
+                salvaBolla(
+                    cantiereId,
+                    numero.text.toString().trim(),
+                    data.text.toString().trim(),
+                    fornitore.text.toString().trim(),
+                    materiali
+                )
+            }
+        }
+
+        layout.addView(salva)
+
+        scroll.addView(layout)
+
+        root.addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        root.setOnApplyWindowInsetsListener { _, insets ->
+
+            val barre = insets.getInsets(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars()
+            )
+
+            layout.setPadding(
+                dp(18),
+                barre.top + dp(10),
+                dp(18),
+                barre.bottom + dp(100)
+            )
+
+            insets
+        }
+
+        setContentView(root)
+        root.requestApplyInsets()
+    }
+
+    private fun salvaBolla(
+        cantiereId: String,
+        numero: String,
+        data: String,
+        fornitore: String,
+        materiali: List<RigaMateriale>
+    ) {
+        val bollaRef = db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("bolle")
+            .document()
+
+        val dati = hashMapOf<String, Any>(
+            "numero" to numero,
+            "data" to data,
+            "fornitore" to fornitore,
+            "timestamp" to System.currentTimeMillis(),
+            "userId" to (auth.currentUser?.uid ?: "")
+        )
+
+        bollaRef.set(dati)
+            .continueWithTask {
+
+                val batch = db.batch()
+
+                materiali.forEach { m ->
+
+                    val ref = bollaRef
+                        .collection("materiali")
+                        .document()
+
+                    batch.set(
+                        ref,
+                        hashMapOf(
+                            "descrizione" to m.descrizione,
+                            "quantitaBolla" to m.quantita,
+                            "quantitaUsata" to 0.0,
+                            "quantitaResidua" to m.quantita,
+                            "timestamp" to System.currentTimeMillis()
+                        )
+                    )
+
+                    val materialeId =
+                        normalizzaMateriale(m.descrizione)
+
+                    val magazzinoRef = db.collection("aziende")
+                        .document(azienda)
+                        .collection("magazzino")
+                        .document(materialeId)
+
+                    val movimentoRef = db.collection("aziende")
+                        .document(azienda)
+                        .collection("movimentiMagazzino")
+                        .document()
+
+                    // L'aggiornamento effettivo del magazzino viene
+                    // eseguito dopo il batch, con una transazione,
+                    // così una nuova bolla viene SOMMATA alla quantità esistente.
+
+                    batch.set(
+                        movimentoRef,
+                        hashMapOf(
+                            "tipo" to "ENTRATA_BOLLA",
+                            "materiale" to m.descrizione,
+                            "quantita" to m.quantita,
+                            "cantiereId" to cantiereId,
+                            "bollaId" to bollaRef.id,
+                            "timestamp" to FieldValue.serverTimestamp(),
+                            "userId" to (auth.currentUser?.uid ?: "")
+                        )
+                    )
+                }
+
+                batch.commit().continueWithTask {
+                    db.runTransaction { transaction ->
+
+                        materiali.forEach { m ->
+
+                            val materialeId =
+                                normalizzaMateriale(m.descrizione)
+
+                            val magazzinoRef = db.collection("aziende")
+                                .document(azienda)
+                                .collection("magazzino")
+                                .document(materialeId)
+
+                            val snap = transaction.get(magazzinoRef)
+
+                            val disponibile =
+                                snap.getDouble("quantitaDisponibile") ?: 0.0
+
+                            transaction.set(
+                                magazzinoRef,
+                                mapOf(
+                                    "descrizione" to m.descrizione,
+                                    "quantitaDisponibile" to
+                                        (disponibile + m.quantita),
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                ),
+                                com.google.firebase.firestore.SetOptions.merge()
+                            )
+                        }
+                    }
+                }
+            }
+            .addOnSuccessListener {
+
+                Toast.makeText(
+                    this,
+                    "Bolla salvata e materiale aggiunto al magazzino",
+                    Toast.LENGTH_LONG
+                ).show()
+
+                allegatoBollaCantiereId = cantiereId
+                allegatoBollaId = bollaRef.id
+
+                AlertDialog.Builder(this)
+                    .setTitle("BOLLA SALVATA")
+                    .setMessage("Vuoi allegare la foto o il PDF originale della bolla?")
+                    .setNegativeButton("DOPO", null)
+                    .setPositiveButton("ALLEGA") { _, _ ->
+                        selettoreAllegatoBolla.launch("*/*")
+                    }
+                    .show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    "Errore salvataggio bolla: ${it.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun ascoltaBolle(id: String) {
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(id)
+            .collection("bolle")
+            .addSnapshotListener { snapshot, error ->
+
+                if (error != null) return@addSnapshotListener
+
+                val container = fotoList ?: return@addSnapshotListener
+
+                container.removeAllViews()
+
+                snapshot?.documents?.forEach { doc ->
+                    mostraBolla(id, doc, container)
+                }
+
+                if (snapshot == null || snapshot.isEmpty) {
+                    container.addView(TextView(this).apply {
+                        text = "Nessuna bolla presente"
+                        textSize = 17f
+                        setTextColor(lightGray)
+                        setPadding(10, 30, 10, 30)
+                    })
+                }
+
+                ascoltaFotoSolo(id, container)
+            }
+    }
+
+    private fun mostraBolla(
+        cantiereId: String,
+        doc: com.google.firebase.firestore.DocumentSnapshot,
+        container: LinearLayout
+    ) {
+        val numero = doc.getString("numero") ?: ""
+        val data = doc.getString("data") ?: ""
+        val fornitore = doc.getString("fornitore") ?: ""
+        val url = doc.getString("url")
+        val nomeFile = doc.getString("nomeFile")
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(15, 15, 15, 15)
+            setBackgroundColor(gray)
+        }
+
+        card.addView(TextView(this).apply {
+            text = "📄 BOLLA $numero"
+            textSize = 19f
+            setTextColor(yellow)
+        })
+
+        card.addView(TextView(this).apply {
+            text = "Data: $data\nFornitore: $fornitore"
+            textSize = 15f
+            setTextColor(white)
+        })
+
+        val materialiBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        card.addView(TextView(this).apply {
+            text = "Materiali:"
+            textSize = 16f
+            setTextColor(yellow)
+            setPadding(0, 10, 0, 5)
+        })
+
+        card.addView(materialiBox)
+
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("bolle")
+            .document(doc.id)
+            .collection("materiali")
+            .addSnapshotListener { snap, _ ->
+
+                materialiBox.removeAllViews()
+
+                snap?.documents?.forEach { mat ->
+                    val descrizione =
+                        mat.getString("descrizione") ?: ""
+
+                    val qBolla =
+                        mat.getDouble("quantitaBolla") ?: 0.0
+
+                    val qUsata =
+                        mat.getDouble("quantitaUsata") ?: 0.0
+
+                    val qResidua =
+                        mat.getDouble("quantitaResidua")
+                            ?: (qBolla - qUsata)
+
+                    val riga = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(10, 5, 10, 5)
+                    }
+
+                    riga.addView(TextView(this).apply {
+                        text = "$descrizione   |   Bolla: ${formatta(qBolla)}"
+                        textSize = 15f
+                        setTextColor(white)
+                    })
+
+                    riga.addView(TextView(this).apply {
+                        text = "Usato: ${formatta(qUsata)}    Residuo: ${formatta(qResidua)}"
+                        textSize = 14f
+                        setTextColor(
+                            if (qResidua > 0) green else lightGray
+                        )
+                    })
+
+                    riga.addView(Button(this).apply {
+                        text = "✏️ MODIFICA UTILIZZATO"
+                        setOnClickListener {
+                            modificaMaterialeBolla(
+                                cantiereId,
+                                doc.id,
+                                mat.id,
+                                descrizione,
+                                qBolla,
+                                qUsata
+                            )
+                        }
+                    })
+
+                    materialiBox.addView(riga)
+                }
+            }
+
+        if (url != null) {
+            card.addView(Button(this).apply {
+                text = "👁️ APRI ALLEGATO"
+                setOnClickListener {
+                    startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse(url)
+                        )
+                    )
+                }
+            })
+        } else {
+            card.addView(Button(this).apply {
+                text = "📎 ALLEGA FOTO / PDF"
+                setOnClickListener {
+                    allegatoBollaCantiereId = cantiereId
+                    allegatoBollaId = doc.id
+                    selettoreAllegatoBolla.launch("*/*")
+                }
+            })
+        }
+
+        card.addView(Button(this).apply {
+            text = "✏️ MODIFICA BOLLA"
+            setOnClickListener {
+                modificaBolla(cantiereId, doc.id)
+            }
+        })
+
+        card.addView(Button(this).apply {
+            text = "🗑️ ELIMINA BOLLA"
+            setOnClickListener {
+                eliminaBolla(cantiereId, doc.id)
+            }
+        })
+
+        val params = LinearLayout.LayoutParams(-1, -2)
+        params.setMargins(0, 0, 0, 20)
+
+        container.addView(card, params)
+    }
+
+    private fun modificaMaterialeBolla(
+        cantiereId: String,
+        bollaId: String,
+        materialeId: String,
+        descrizione: String,
+        quantitaBolla: Double,
+        vecchiaUsata: Double
+    ) {
+        val input = campo("Quantità utilizzata")
+        input.setText(formatta(vecchiaUsata))
+
+        AlertDialog.Builder(this)
+            .setTitle(descrizione)
+            .setMessage(
+                "Quantità bolla: ${formatta(quantitaBolla)}\n" +
+                "Inserisci la nuova quantità utilizzata:"
+            )
+            .setView(input)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("SALVA") { _, _ ->
+
+                val nuovaUsata = input.text.toString()
+                    .replace(",", ".")
+                    .toDoubleOrNull()
+
+                if (nuovaUsata == null ||
+                    nuovaUsata < 0 ||
+                    nuovaUsata > quantitaBolla
+                ) {
+                    Toast.makeText(
+                        this,
+                        "Quantità non valida",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@setPositiveButton
+                }
+
+                aggiornaQuantitaMateriale(
+                    cantiereId,
+                    bollaId,
+                    materialeId,
+                    descrizione,
+                    quantitaBolla,
+                    vecchiaUsata,
+                    nuovaUsata
+                )
+            }
+            .show()
+    }
+
+    private fun aggiornaQuantitaMateriale(
+        cantiereId: String,
+        bollaId: String,
+        materialeId: String,
+        descrizione: String,
+        quantitaBolla: Double,
+        vecchiaUsata: Double,
+        nuovaUsata: Double
+    ) {
+        val materialeRef = db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("bolle")
+            .document(bollaId)
+            .collection("materiali")
+            .document(materialeId)
+
+        val magazzinoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("magazzino")
+            .document(normalizzaMateriale(descrizione))
+
+        val vecchioResiduo = quantitaBolla - vecchiaUsata
+        val nuovoResiduo = quantitaBolla - nuovaUsata
+        val variazioneMagazzino =
+            nuovoResiduo - vecchioResiduo
+
+        db.runTransaction { transaction ->
+
+            val magazzinoSnap = transaction.get(magazzinoRef)
+            val disponibile =
+                magazzinoSnap.getDouble("quantitaDisponibile") ?: 0.0
+
+            val nuovoMagazzino =
+                disponibile + variazioneMagazzino
+
+            if (nuovoMagazzino < -0.0001) {
+                throw Exception(
+                    "Operazione non possibile: il magazzino non contiene abbastanza materiale."
+                )
+            }
+
+            transaction.update(
+                materialeRef,
+                mapOf(
+                    "quantitaUsata" to nuovaUsata,
+                    "quantitaResidua" to nuovoResiduo,
+                    "timestamp" to System.currentTimeMillis()
+                )
+            )
+
+            transaction.set(
+                magazzinoRef,
+                mapOf(
+                    "descrizione" to descrizione,
+                    "quantitaDisponibile" to nuovoMagazzino,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                com.google.firebase.firestore.SetOptions.merge()
+            )
+
+            val movimento = db.collection("aziende")
+                .document(azienda)
+                .collection("movimentiMagazzino")
+                .document()
+
+            transaction.set(
+                movimento,
+                mapOf(
+                    "tipo" to "RETTIFICA_BOLLA",
+                    "materiale" to descrizione,
+                    "quantita" to variazioneMagazzino,
+                    "cantiereId" to cantiereId,
+                    "bollaId" to bollaId,
+                    "timestamp" to FieldValue.serverTimestamp(),
+                    "userId" to (auth.currentUser?.uid ?: "")
+                )
+            )
+        }
+            .addOnSuccessListener {
+                Toast.makeText(
+                    this,
+                    "Quantità aggiornata e magazzino sincronizzato",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    it.message ?: "Errore aggiornamento",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun modificaBolla(cantiereId: String, bollaId: String) {
+        val ref = db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("bolle")
+            .document(bollaId)
+
+        ref.get().addOnSuccessListener { doc ->
+
+            val numero = campo("Numero bolla")
+            val data = campo("Data")
+            val fornitore = campo("Fornitore")
+
+            numero.setText(doc.getString("numero") ?: "")
+            data.setText(doc.getString("data") ?: "")
+            fornitore.setText(doc.getString("fornitore") ?: "")
+
+            val layout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(20, 5, 20, 5)
+            }
+
+            layout.addView(numero)
+            layout.addView(data)
+            layout.addView(fornitore)
+
+            AlertDialog.Builder(this)
+                .setTitle("MODIFICA BOLLA")
+                .setView(layout)
+                .setNegativeButton("ANNULLA", null)
+                .setPositiveButton("SALVA") { _, _ ->
+                    ref.update(
+                        mapOf(
+                            "numero" to numero.text.toString().trim(),
+                            "data" to data.text.toString().trim(),
+                            "fornitore" to fornitore.text.toString().trim(),
+                            "timestamp" to System.currentTimeMillis()
+                        )
+                    )
+                }
+                .show()
+        }
+    }
+
+    private fun eliminaBolla(cantiereId: String, bollaId: String) {
+
+        AlertDialog.Builder(this)
+            .setTitle("Eliminare la bolla?")
+            .setMessage(
+                "Il materiale residuo della bolla verrà rimosso dal magazzino."
+            )
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("ELIMINA") { _, _ ->
+
+                val bollaRef = db.collection("aziende")
+                    .document(azienda)
+                    .collection("cantieri")
+                    .document(cantiereId)
+                    .collection("bolle")
+                    .document(bollaId)
+
+                bollaRef.collection("materiali")
+                    .get()
+                    .addOnSuccessListener { snap ->
+
+                        db.runTransaction { transaction ->
+
+                            snap.documents.forEach { mat ->
+                                val descrizione =
+                                    mat.getString("descrizione") ?: ""
+
+                                val residuo =
+                                    mat.getDouble("quantitaResidua") ?: 0.0
+
+                                if (residuo > 0) {
+                                    val magazzinoRef =
+                                        db.collection("aziende")
+                                            .document(azienda)
+                                            .collection("magazzino")
+                                            .document(
+                                                normalizzaMateriale(
+                                                    descrizione
+                                                )
+                                            )
+
+                                    val mag =
+                                        transaction.get(magazzinoRef)
+
+                                    val disponibile =
+                                        mag.getDouble(
+                                            "quantitaDisponibile"
+                                        ) ?: 0.0
+
+                                    transaction.update(
+                                        magazzinoRef,
+                                        "quantitaDisponibile",
+                                        (disponibile - residuo)
+                                            .coerceAtLeast(0.0)
+                                    )
+                                }
+                            }
+
+                            transaction.delete(bollaRef)
+                        }
+                            .addOnSuccessListener {
+                                Toast.makeText(
+                                    this,
+                                    "Bolla eliminata",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            .addOnFailureListener {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Errore eliminazione: ${it.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                    }
+            }
+            .show()
+    }
+
+    private fun caricaAllegatoBolla(
+        cantiereId: String,
+        bollaId: String,
+        uri: Uri
+    ) {
+        val nome = "bolla_${System.currentTimeMillis()}"
+
+        val riferimento = storage.reference
+            .child("aziende")
+            .child(azienda)
+            .child("cantieri")
+            .child(cantiereId)
+            .child("bolle")
+            .child(bollaId)
+            .child(nome)
+
+        Toast.makeText(
+            this,
+            "Caricamento allegato...",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        riferimento.putFile(uri)
+            .continueWithTask { task ->
+                if (!task.isSuccessful) {
+                    throw task.exception ?: Exception("Errore caricamento")
+                }
+                riferimento.downloadUrl
+            }
+            .addOnSuccessListener { downloadUri ->
+
+                db.collection("aziende")
+                    .document(azienda)
+                    .collection("cantieri")
+                    .document(cantiereId)
+                    .collection("bolle")
+                    .document(bollaId)
+                    .update(
+                        mapOf(
+                            "url" to downloadUri.toString(),
+                            "nomeFile" to nome,
+                            "timestampAllegato" to System.currentTimeMillis()
+                        )
+                    )
+                    .addOnSuccessListener {
+                        Toast.makeText(
+                            this,
+                            "Allegato salvato",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    "Errore allegato: ${it.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    // ----------------------------------------------------------------
+    // FOTO VISUALIZZAZIONE
+    // ----------------------------------------------------------------
+
+    private fun ascoltaFotoSolo(
+        id: String,
+        container: LinearLayout
+    ) {
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(id)
+            .collection("foto")
+            .addSnapshotListener { snapshot, _ ->
+
+                snapshot?.documents?.forEach { doc ->
+
+                    if (doc.getString("tipo") != "foto") return@forEach
+
+                    val url = doc.getString("url") ?: return@forEach
+                    val nome = doc.getString("nome") ?: "Foto"
+
+                    val riga = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(10, 15, 10, 15)
+                    }
+
+                    riga.addView(TextView(this).apply {
+                        text = "🖼️ $nome"
+                        textSize = 16f
+                        setTextColor(white)
+                    })
+
+                    riga.addView(Button(this).apply {
+                        text = "👁️ APRI FOTO"
+                        setOnClickListener {
+                            startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(url)
+                                )
+                            )
+                        }
+                    })
+
+                    riga.addView(Button(this).apply {
+                        text = "🗑️ ELIMINA FOTO"
+                        setOnClickListener {
+
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Eliminare questa foto?")
+                                .setNegativeButton("ANNULLA", null)
+                                .setPositiveButton("ELIMINA") { _, _ ->
+
+                                    storage.getReferenceFromUrl(url)
+                                        .delete()
+                                        .addOnCompleteListener {
+
+                                            db.collection("aziende")
+                                                .document(azienda)
+                                                .collection("cantieri")
+                                                .document(id)
+                                                .collection("foto")
+                                                .document(doc.id)
+                                                .delete()
+                                        }
+                                }
+                                .show()
+                        }
+                    })
+
+                    container.addView(riga)
+                }
+            }
+    }
+
+    // ----------------------------------------------------------------
+    // MAGAZZINO
+    // ----------------------------------------------------------------
+
+    private fun magazzino(cantiereId: String = "") {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        val sfondo = ImageView(this).apply {
+            setImageResource(R.drawable.sfondo_villa)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        root.addView(
+            sfondo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val velo = View(this).apply {
+            setBackgroundColor(0xAA000000.toInt())
+        }
+
+        root.addView(
+            velo,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        root.addView(
+            contenuto,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val titolo = TextView(this).apply {
+            text = "🏭  MAGAZZINO AZIENDALE"
+            textSize = 23f
+            gravity = Gravity.CENTER
+            setTextColor(yellow)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(12))
+        }
+
+        contenuto.addView(titolo)
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(8), dp(18), dp(110))
+        }
+
+        scroll.addView(container)
+
+        contenuto.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        val indietro = TextView(this).apply {
+            text = "←  TORNA AL CANTIERE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xDD303030.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            setOnClickListener {
+                if (cantiereId.isNotBlank()) {
+                    db.collection("aziende").document(azienda).collection("cantieri").document(cantiereId).get().addOnSuccessListener { doc ->
+                        val c = doc.toObject(Cantiere::class.java)
+                        if (c != null) dettaglioCantiere(cantiereId, c)
+                    }
+                } else {
+                    home()
+                }
+            }
+        }
+
+        contenuto.addView(
+            indietro,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(54)
+            ).apply {
+                leftMargin = dp(18)
+                rightMargin = dp(18)
+                bottomMargin = dp(12)
+            }
+        )
+
+        contenuto.setOnApplyWindowInsetsListener { _, insets ->
+            val barre = insets.getInsets(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars()
+            )
+
+            contenuto.setPadding(
+                0,
+                barre.top + dp(8),
+                0,
+                barre.bottom + dp(8)
+            )
+
+            insets
+        }
+
+        setContentView(root)
+        root.requestApplyInsets()
+
+        db.collection("aziende")
+            .document(azienda)
+            .collection("magazzino")
+            .addSnapshotListener { snapshot, error ->
+
+                if (error != null) {
+                    Toast.makeText(
+                        this,
+                        "Errore magazzino: ${error.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@addSnapshotListener
+                }
+
+                container.removeAllViews()
+
+                if (snapshot == null || snapshot.isEmpty) {
+                    container.addView(TextView(this).apply {
+                        text = "Magazzino vuoto"
+                        textSize = 18f
+                        setTextColor(lightGray)
+                        setPadding(10, 40, 10, 40)
+                    })
+                    return@addSnapshotListener
+                }
+
+                snapshot.documents
+                    .sortedBy {
+                        it.getString("descrizione") ?: ""
+                    }
+                    .forEach { doc ->
+
+                        val descrizione =
+                            doc.getString("descrizione") ?: doc.id
+
+                        val quantita =
+                            doc.getDouble("quantitaDisponibile")
+                                ?: 0.0
+
+                        val riga = LinearLayout(this).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setPadding(dp(18), dp(16), dp(18), dp(16))
+
+                            background = android.graphics.drawable.GradientDrawable().apply {
+                                setColor(0xDD202020.toInt())
+                                setStroke(dp(1), 0x55FFC400.toInt())
+                                cornerRadius = dp(16).toFloat()
+                            }
+
+                            elevation = dp(3).toFloat()
+                        }
+
+                        riga.addView(TextView(this).apply {
+                            text = descrizione
+                            textSize = 19f
+                            setTypeface(null, android.graphics.Typeface.BOLD)
+                            setTextColor(yellow)
+                        })
+
+                        riga.addView(TextView(this).apply {
+                            text = "Disponibile: ${formatta(quantita)}"
+                            textSize = 17f
+                            setPadding(0, dp(6), 0, 0)
+                            setTextColor(
+                                if (quantita > 0) green else lightGray
+                            )
+                        })
+
+                        val params =
+                            LinearLayout.LayoutParams(-1, -2)
+
+                        params.setMargins(0, 0, 0, dp(10))
+
+                        container.addView(riga, params)
+                    }
+            }
+    }
+
+    private fun prelevaMagazzino(
+        cantiereId: String,
+        cantiere: Cantiere
+    ) {
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 5, 20, 5)
+        }
+
+        val materiale = campo("Materiale")
+        val quantita = campo("Quantità da prelevare")
+        val nota = campo("Nota")
+
+        root.addView(materiale)
+        root.addView(quantita)
+        root.addView(nota)
+
+        AlertDialog.Builder(this)
+            .setTitle("PRELEVA DAL MAGAZZINO")
+            .setView(root)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("PRELEVA", null)
+            .create()
+            .also { dialog ->
+
+                dialog.setOnShowListener {
+
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener {
+
+                            val descrizione =
+                                materiale.text.toString().trim()
+
+                            val qta =
+                                quantita.text.toString()
+                                    .replace(",", ".")
+                                    .toDoubleOrNull()
+
+                            if (descrizione.isEmpty() ||
+                                qta == null ||
+                                qta <= 0
+                            ) {
+                                Toast.makeText(
+                                    this,
+                                    "Inserisci materiale e quantità valide",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@setOnClickListener
+                            }
+
+                            eseguiPrelievo(
+                                cantiereId,
+                                cantiere,
+                                descrizione,
+                                qta,
+                                nota.text.toString().trim()
+                            )
+
+                            dialog.dismiss()
+                        }
+                }
+
+                dialog.show()
+            }
+    }
+
+    private fun eseguiPrelievo(
+        cantiereId: String,
+        cantiere: Cantiere,
+        descrizione: String,
+        quantita: Double,
+        nota: String
+    ) {
+        val magazzinoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("magazzino")
+            .document(normalizzaMateriale(descrizione))
+
+        val prelievoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("prelieviMagazzino")
+            .document()
+
+        val movimentoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("movimentiMagazzino")
+            .document()
+
+        db.runTransaction { transaction ->
+
+            val magazzino =
+                transaction.get(magazzinoRef)
+
+            val disponibile =
+                magazzino.getDouble("quantitaDisponibile")
+                    ?: 0.0
+
+            if (quantita > disponibile) {
+                throw Exception(
+                    "Quantità non disponibile. Disponibili: ${formatta(disponibile)}"
+                )
+            }
+
+            val nuovoTotale =
+                disponibile - quantita
+
+            transaction.update(
+                magazzinoRef,
+                mapOf(
+                    "quantitaDisponibile" to nuovoTotale,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+
+            transaction.set(
+                prelievoRef,
+                mapOf(
+                    "materiale" to descrizione,
+                    "quantita" to quantita,
+                    "nota" to nota,
+                    "timestamp" to FieldValue.serverTimestamp(),
+                    "userId" to (auth.currentUser?.uid ?: "")
+                )
+            )
+
+            transaction.set(
+                movimentoRef,
+                mapOf(
+                    "tipo" to "USCITA_CANTIERE",
+                    "materiale" to descrizione,
+                    "quantita" to quantita,
+                    "cantiereId" to cantiereId,
+                    "cantiereNome" to cantiere.nome,
+                    "nota" to nota,
+                    "timestamp" to FieldValue.serverTimestamp(),
+                    "userId" to (auth.currentUser?.uid ?: "")
+                )
+            )
+        }
+            .addOnSuccessListener {
+                Toast.makeText(
+                    this@MainActivity,
+                    "${formatta(quantita)} $descrizione prelevati dal magazzino",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    it.message ?: "Errore prelievo",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+
+    // ----------------------------------------------------------------
+    // MATERIALI UTILIZZATI
+    // ----------------------------------------------------------------
+
+    private fun materialiUtilizzati(cantiereId: String) {
+
+        fun dp(v: Int): Int =
+            (v * resources.displayMetrics.density).toInt()
+
+        val root = FrameLayout(this)
+
+        root.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.sfondo_villa)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        root.addView(
+            View(this).apply {
+                setBackgroundColor(0xAA000000.toInt())
+            },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val contenuto = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(100))
+        }
+
+        contenuto.addView(TextView(this).apply {
+            text = "📋  MATERIALI UTILIZZATI"
+            textSize = 27f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(20))
+        })
+
+        val scroll = ScrollView(this).apply {
+            clipToPadding = false
+        }
+
+        val lista = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(5), 0, dp(90))
+        }
+
+        scroll.addView(lista)
+
+        contenuto.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        root.addView(
+            contenuto,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val torna = TextView(this).apply {
+            text = "←  TORNA A BOLLE E NOTE MATERIALE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xEE242424.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            elevation = dp(8).toFloat()
+
+            setOnClickListener {
+                fotoCantiere(cantiereId)
+            }
+        }
+
+        val tornaParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            dp(54)
+        ).apply {
+            gravity = Gravity.BOTTOM
+            leftMargin = dp(18)
+            rightMargin = dp(18)
+            bottomMargin = dp(18)
+        }
+
+        root.addView(torna, tornaParams)
+
+        root.setOnApplyWindowInsetsListener { _, insets ->
+
+            val barre = insets.getInsets(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars()
+            )
+
+            contenuto.setPadding(
+                dp(18),
+                barre.top + dp(10),
+                dp(18),
+                barre.bottom + dp(90)
+            )
+
+            tornaParams.bottomMargin = barre.bottom + dp(14)
+            torna.layoutParams = tornaParams
+
+            insets
+        }
+
+        setContentView(root)
+        root.requestApplyInsets()
+
+        val totali = linkedMapOf<String, Double>()
+
+        fun aggiungiMateriale(
+            descrizione: String,
+            quantita: Double
+        ) {
+            if (descrizione.isBlank() || quantita <= 0) return
+
+            val chiave = normalizzaMateriale(descrizione)
+
+            totali[chiave] =
+                (totali[chiave] ?: 0.0) + quantita
+        }
+
+        fun aggiornaLista() {
+
+            lista.removeAllViews()
+
+            if (totali.isEmpty()) {
+                lista.addView(TextView(this).apply {
+                    text = "Nessun materiale utilizzato"
+                    textSize = 18f
+                    setTextColor(lightGray)
+                    gravity = Gravity.CENTER
+                    setPadding(
+                        dp(10),
+                        dp(30),
+                        dp(10),
+                        dp(30)
+                    )
+                })
+                return
+            }
+
+            totali.forEach { (chiave, quantita) ->
+
+                val descrizione =
+                    chiave.replace("_", " ")
+
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(
+                        dp(16),
+                        dp(14),
+                        dp(16),
+                        dp(14)
+                    )
+
+                    background =
+                        android.graphics.drawable.GradientDrawable().apply {
+                            setColor(0xDD242424.toInt())
+                            setStroke(
+                                dp(1),
+                                0x99FFC400.toInt()
+                            )
+                            cornerRadius = dp(13).toFloat()
+                        }
+
+                    elevation = dp(3).toFloat()
+                }
+
+                card.addView(TextView(this).apply {
+                    text = descrizione
+                    textSize = 18f
+                    setTextColor(Color.WHITE)
+                    setTypeface(
+                        null,
+                        android.graphics.Typeface.BOLD
+                    )
+                })
+
+                card.addView(TextView(this).apply {
+                    text = "Utilizzato: ${formatta(quantita)}"
+                    textSize = 16f
+                    setTextColor(Color.parseColor("#FFC400"))
+                    setPadding(0, dp(5), 0, 0)
+                })
+
+                lista.addView(
+                    card,
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = dp(10)
+                    }
+                )
+            }
+        }
+
+        fun caricaPrelieviMateriali() {
+
+            db.collection("aziende")
+                .document(azienda)
+                .collection("cantieri")
+                .document(cantiereId)
+                .collection("prelieviMagazzino")
+                .get()
+                .addOnSuccessListener { prelievi ->
+
+                    prelievi.documents.forEach { doc ->
+                        aggiungiMateriale(
+                            doc.getString("materiale") ?: "",
+                            doc.getDouble("quantita") ?: 0.0
+                        )
+                    }
+
+                    aggiornaLista()
+                }
+                .addOnFailureListener {
+                    aggiornaLista()
+                }
+        }
+
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("bolle")
+            .get()
+            .addOnSuccessListener { bolle ->
+
+                if (bolle.isEmpty) {
+                    caricaPrelieviMateriali()
+                    return@addOnSuccessListener
+                }
+
+                var completate = 0
+
+                fun fineLetturaBolla() {
+                    completate++
+
+                    if (completate == bolle.size()) {
+                        caricaPrelieviMateriali()
+                    }
+                }
+
+                bolle.documents.forEach { bolla ->
+
+                    bolla.reference
+                        .collection("materiali")
+                        .get()
+                        .addOnSuccessListener { materiali ->
+
+                            materiali.documents.forEach { mat ->
+
+                                aggiungiMateriale(
+                                    mat.getString("descrizione") ?: "",
+                                    mat.getDouble("quantitaUsata") ?: 0.0
+                                )
+                            }
+
+                            fineLetturaBolla()
+                        }
+                        .addOnFailureListener {
+                            fineLetturaBolla()
+                        }
+                }
+            }
+            .addOnFailureListener {
+
+                Toast.makeText(
+                    this,
+                    "Errore lettura materiali",
+                    Toast.LENGTH_LONG
+                ).show()
+
+                caricaPrelieviMateriali()
+            }
+    }
+
+    // ----------------------------------------------------------------
+    // UTILITA'
+    // ----------------------------------------------------------------
+
+    private fun normalizzaMateriale(testo: String): String {
+        return testo.trim()
+            .lowercase()
+            .replace(Regex("[^a-z0-9àèéìòù ]"), "")
+            .replace(Regex("\\s+"), "_")
+            .take(100)
+            .ifBlank {
+                "materiale_${System.currentTimeMillis()}"
+            }
+    }
+
+    private fun formatta(numero: Double): String {
+        return if (numero % 1.0 == 0.0) {
+            numero.toInt().toString()
+        } else {
+            "%.2f".format(java.util.Locale.ITALIAN, numero)
+        }
+    }
+}
