@@ -2357,6 +2357,35 @@ class MainActivity : AppCompatActivity() {
 
         layout.addView(salva)
 
+        val torna = TextView(this).apply {
+            text = "←  TORNA A BOLLE E NOTE MATERIALE"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xEE242424.toInt())
+                setStroke(dp(1), 0x99FFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            elevation = dp(4).toFloat()
+
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(54)
+            ).apply {
+                topMargin = dp(12)
+            }
+
+            setOnClickListener {
+                fotoCantiere(cantiereId)
+            }
+        }
+
+        layout.addView(torna)
+
         scroll.addView(layout)
 
         root.addView(
