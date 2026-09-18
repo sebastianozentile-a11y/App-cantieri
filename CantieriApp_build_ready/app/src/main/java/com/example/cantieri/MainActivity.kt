@@ -1521,13 +1521,29 @@ class MainActivity : AppCompatActivity() {
             elevation = dp(8).toFloat()
 
             setOnClickListener {
-                val cantiere = cantieri.firstOrNull { it.first == id }
-
-                if (cantiere != null) {
-                    dettaglioCantiere(id, cantiere.second)
-                } else {
-                    home()
-                }
+                db.collection("aziende")
+                    .document(azienda)
+                    .collection("cantieri")
+                    .document(id)
+                    .get()
+                    .addOnSuccessListener { doc ->
+                        if (doc.exists()) {
+                            val cantiere = Cantiere(
+                                id = doc.id,
+                                nome = doc.getString("nome") ?: "",
+                                cliente = doc.getString("cliente") ?: "",
+                                telefono = doc.getString("telefono") ?: "",
+                                indirizzo = doc.getString("indirizzo") ?: "",
+                                note = doc.getString("note") ?: ""
+                            )
+                            dettaglioCantiere(id, cantiere)
+                        } else {
+                            Toast.makeText(this@MainActivity, "Cantiere non trovato", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .addOnFailureListener {
+                        Toast.makeText(this@MainActivity, "Errore nel caricamento del cantiere", Toast.LENGTH_SHORT).show()
+                    }
             }
         }
 
