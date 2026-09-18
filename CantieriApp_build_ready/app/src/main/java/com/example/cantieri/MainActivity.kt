@@ -3541,6 +3541,75 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    private fun eliminaPrelievo(
+        cantiereId: String,
+        prelievoId: String,
+        descrizione: String,
+        quantita: Double
+    ) {
+        val magazzinoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("magazzino")
+            .document(normalizzaMateriale(descrizione))
+
+        val prelievoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("prelieviMagazzino")
+            .document(prelievoId)
+
+        val movimentoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("movimentiMagazzino")
+            .document()
+
+        db.runTransaction { transaction ->
+            val magazzino = transaction.get(magazzinoRef)
+            val disponibile =
+                magazzino.getDouble("quantitaDisponibile") ?: 0.0
+
+            transaction.set(
+                magazzinoRef,
+                mapOf(
+                    "descrizione" to descrizione,
+                    "quantitaDisponibile" to (disponibile + quantita),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                com.google.firebase.firestore.SetOptions.merge()
+            )
+
+            transaction.delete(prelievoRef)
+
+            transaction.set(
+                movimentoRef,
+                mapOf(
+                    "tipo" to "RESTITUZIONE_CANTIERE",
+                    "materiale" to descrizione,
+                    "quantita" to quantita,
+                    "cantiereId" to cantiereId,
+                    "timestamp" to FieldValue.serverTimestamp(),
+                    "userId" to (auth.currentUser?.uid ?: "")
+                )
+            )
+        }
+            .addOnSuccessListener {
+                Toast.makeText(
+                    this@MainActivity,
+                    "${formatta(quantita)} $descrizione restituiti al magazzino",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this@MainActivity,
+                    it.message ?: "Errore nella restituzione",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+
     // ----------------------------------------------------------------
     // MATERIALI UTILIZZATI
     // ----------------------------------------------------------------
