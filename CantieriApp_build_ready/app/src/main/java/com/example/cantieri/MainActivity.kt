@@ -2235,6 +2235,27 @@ class MainActivity : AppCompatActivity() {
         layout.addView(materialiContainer)
 
         val righe = mutableListOf<Pair<EditText, EditText>>()
+        val materialiMagazzino = mutableListOf<String>()
+        val adattatoriMateriali = mutableListOf<ArrayAdapter<String>>()
+
+        db.collection("aziende")
+            .document(azienda)
+            .collection("magazzino")
+            .get()
+            .addOnSuccessListener { snapshot ->
+                materialiMagazzino.clear()
+
+                snapshot.documents.forEach { doc ->
+                    val nome = doc.getString("descrizione") ?: ""
+                    if (nome.isNotBlank()) {
+                        materialiMagazzino.add(nome)
+                    }
+                }
+
+                adattatoriMateriali.forEach {
+                    it.notifyDataSetChanged()
+                }
+            }
 
         fun aggiungiRiga() {
 
@@ -2243,13 +2264,41 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER_VERTICAL
             }
 
-            val materiale = campoModerno("Materiale", 64)
-            val quantita = campoModerno("Quantità", 64)
+            val materiale = AutoCompleteTextView(this).apply {
+                hint = "Materiale"
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.parseColor("#AAAAAA"))
+                setSingleLine(true)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), 0)
+                threshold = 1
 
-            materiale.layoutParams =
-                LinearLayout.LayoutParams(0, dp(64), 2.2f).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xE6242424.toInt())
+                    setStroke(dp(1), 0x99555555.toInt())
+                    cornerRadius = dp(12).toFloat()
+                }
+
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    dp(64),
+                    2.2f
+                ).apply {
                     rightMargin = 6
                 }
+
+                val adapter = ArrayAdapter(
+                    this@MainActivity,
+                    android.R.layout.simple_dropdown_item_1line,
+                    materialiMagazzino
+                )
+
+                setAdapter(adapter)
+                adattatoriMateriali.add(adapter)
+            }
+
+            val quantita = campoModerno("Quantità", 64)
 
             quantita.layoutParams =
                 LinearLayout.LayoutParams(0, dp(64), 1f)
