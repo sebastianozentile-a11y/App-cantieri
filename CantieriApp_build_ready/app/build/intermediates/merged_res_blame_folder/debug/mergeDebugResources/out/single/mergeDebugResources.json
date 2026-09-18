@@ -1,0 +1,26 @@
+[
+    {
+        "merged": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-debug-44:/drawable_logo_tecnoluce.png.flat",
+        "source": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-main-46:/drawable/logo_tecnoluce.png"
+    },
+    {
+        "merged": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-debug-44:/xml_file_paths.xml.flat",
+        "source": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-main-46:/xml/file_paths.xml"
+    },
+    {
+        "merged": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-debug-44:/drawable_sfondo_villa.png.flat",
+        "source": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-main-46:/drawable/sfondo_villa.png"
+    },
+    {
+        "merged": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-debug-44:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-main-46:/mipmap-xxxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-debug-44:/drawable_sfondo_login.png.flat",
+        "source": "/home/codespace/.gradle/daemon/8.9/com.example.cantieri.app-main-46:/drawable/sfondo_login.png"
+    },
+    {
+        "merged": "com.example.cantieri.app-debug-44:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.example.cantieri.app-main-46:/mipmap-xxxhdpi/ic_launcher.png"
+    }
+]

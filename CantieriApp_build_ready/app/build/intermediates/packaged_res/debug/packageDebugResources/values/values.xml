@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gcm_defaultSenderId" translatable="false">1047473168803</string>
+    <string name="google_api_key" translatable="false">AIzaSyB5BWuVBfUfGqzfrxAaxLLZ596mMdqQpwQ</string>
+    <string name="google_app_id" translatable="false">1:1047473168803:android:43f48b8a67afb643583a16</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyB5BWuVBfUfGqzfrxAaxLLZ596mMdqQpwQ</string>
+    <string name="google_storage_bucket" translatable="false">tecnoluce-cantieri.firebasestorage.app</string>
+    <string name="project_id" translatable="false">tecnoluce-cantieri</string>
+    <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:colorAccent">#1565C0</item></style>
+</resources>
