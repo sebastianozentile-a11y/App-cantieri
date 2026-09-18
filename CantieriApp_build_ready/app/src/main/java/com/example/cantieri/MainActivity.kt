@@ -956,24 +956,6 @@ class MainActivity : AppCompatActivity() {
 
         val root = FrameLayout(this)
 
-        val indietro = TextView(this).apply {
-            text = "←  TORNA A FOTO E BOLLE"
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xDD303030.toInt())
-                setStroke(dp(1), 0x99FFC400.toInt())
-                cornerRadius = dp(13).toFloat()
-            }
-
-            setOnClickListener {
-                fotoCantiere(id)
-            }
-        }
-
         val sfondo = ImageView(this).apply {
             setImageResource(R.drawable.sfondo_villa)
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -997,19 +979,6 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-        )
-
-        root.addView(
-            indietro,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(52)
-            ).apply {
-                gravity = Gravity.TOP
-                leftMargin = dp(18)
-                rightMargin = dp(18)
-                topMargin = dp(18)
-            }
         )
 
         val scroll = ScrollView(this).apply {
