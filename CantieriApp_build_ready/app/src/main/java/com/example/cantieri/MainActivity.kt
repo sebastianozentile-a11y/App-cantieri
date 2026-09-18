@@ -1456,17 +1456,37 @@ class MainActivity : AppCompatActivity() {
 
         contenuto.addView(
             pulsante("📦   PRELEVA DAL MAGAZZINO") {
-                val cantiere = cantieri.firstOrNull { it.first == id }
-
-                if (cantiere != null) {
-                    prelevaMagazzino(id, cantiere.second)
-                } else {
-                    Toast.makeText(
-                        this,
-                        "Cantiere non trovato",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+                db.collection("aziende")
+                    .document(azienda)
+                    .collection("cantieri")
+                    .document(id)
+                    .get()
+                    .addOnSuccessListener { doc ->
+                        if (doc.exists()) {
+                            val cantiere = Cantiere(
+                                id = doc.id,
+                                nome = doc.getString("nome") ?: "",
+                                cliente = doc.getString("cliente") ?: "",
+                                telefono = doc.getString("telefono") ?: "",
+                                indirizzo = doc.getString("indirizzo") ?: "",
+                                note = doc.getString("note") ?: ""
+                            )
+                            prelevaMagazzino(id, cantiere)
+                        } else {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Cantiere non trovato",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                    .addOnFailureListener {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Errore nel caricamento del cantiere",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
             }
         )
 
