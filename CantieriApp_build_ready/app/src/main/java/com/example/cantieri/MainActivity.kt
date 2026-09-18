@@ -2466,27 +2466,38 @@ class MainActivity : AppCompatActivity() {
                 batch.commit().continueWithTask {
                     db.runTransaction { transaction ->
 
-                        materiali.forEach { m ->
+                        val raggruppati = materiali.groupBy {
+                            normalizzaMateriale(it.descrizione)
+                        }
 
-                            val materialeId =
-                                normalizzaMateriale(m.descrizione)
-
-                            val magazzinoRef = db.collection("aziende")
+                        val righeMagazzino = raggruppati.map { (materialeId, righe) ->
+                            val ref = db.collection("aziende")
                                 .document(azienda)
                                 .collection("magazzino")
                                 .document(materialeId)
 
-                            val snap = transaction.get(magazzinoRef)
+                            Triple(
+                                ref,
+                                righe.first().descrizione,
+                                righe.sumOf { it.quantita }
+                            )
+                        }
 
+                        val letture = righeMagazzino.map { riga ->
+                            transaction.get(riga.first)
+                        }
+
+                        righeMagazzino.forEachIndexed { index, riga ->
+                            val snap = letture[index]
                             val disponibile =
                                 snap.getDouble("quantitaDisponibile") ?: 0.0
 
                             transaction.set(
-                                magazzinoRef,
+                                riga.first,
                                 mapOf(
-                                    "descrizione" to m.descrizione,
+                                    "descrizione" to riga.second,
                                     "quantitaDisponibile" to
-                                        (disponibile + m.quantita),
+                                        (disponibile + riga.third),
                                     "updatedAt" to FieldValue.serverTimestamp()
                                 ),
                                 com.google.firebase.firestore.SetOptions.merge()
