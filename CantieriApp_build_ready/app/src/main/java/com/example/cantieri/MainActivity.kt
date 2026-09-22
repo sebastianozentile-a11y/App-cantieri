@@ -2013,6 +2013,27 @@ class MainActivity : AppCompatActivity() {
 
                 dialog.setOnShowListener {
 
+                    dialog.window?.setBackgroundDrawable(
+                        android.graphics.drawable.GradientDrawable().apply {
+                            setColor(0xFF171717.toInt())
+                            setStroke(1, 0x99FFC400.toInt())
+                            cornerRadius = 18f
+                        }
+                    )
+
+                    dialog.getButton(AlertDialog.BUTTON_NEGATIVE).apply {
+                        setTextColor(Color.WHITE)
+                    }
+
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).apply {
+                        setTextColor(Color.BLACK)
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(0xFFFFC400.toInt())
+                            cornerRadius = 12f
+                        }
+                    }
+
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE)
                         .setOnClickListener {
 
@@ -3431,6 +3452,137 @@ class MainActivity : AppCompatActivity() {
             }
     }
 
+    private fun generaPdfMaterialiUtilizzati(cantiereId: String) {
+        db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .get()
+            .addOnSuccessListener { cantiereDoc ->
+                val nomeCantiere = cantiereDoc.getString("nome") ?: ""
+
+                db.collection("aziende")
+                    .document(azienda)
+                    .collection("cantieri")
+                    .document(cantiereId)
+                    .collection("prelieviMagazzino")
+                    .get()
+                    .addOnSuccessListener { snapshot ->
+
+                        val totaliPdf = linkedMapOf<String, Double>()
+
+                        snapshot.documents.forEach { doc ->
+                            val materiale = doc.getString("materiale") ?: ""
+                            val quantita = doc.getDouble("quantitaUtilizzata") ?: 0.0
+
+                            if (materiale.isNotBlank() && quantita > 0) {
+                                val chiave = normalizzaMateriale(materiale)
+                                totaliPdf[chiave] =
+                                    (totaliPdf[chiave] ?: 0.0) + quantita
+                            }
+                        }
+
+                        if (totaliPdf.isEmpty()) {
+                            Toast.makeText(
+                                this,
+                                "Nessun materiale prelevato dal magazzino",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            return@addOnSuccessListener
+                        }
+
+                        val pdf = android.graphics.pdf.PdfDocument()
+                        val pagina = pdf.startPage(
+                            android.graphics.pdf.PdfDocument.PageInfo.Builder(
+                                595,
+                                842,
+                                1
+                            ).create()
+                        )
+
+                        val canvas = pagina.canvas
+                        val titolo = android.graphics.Paint().apply {
+                            textSize = 24f
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        }
+                        val testo = android.graphics.Paint().apply {
+                            textSize = 15f
+                        }
+                        val grassetto = android.graphics.Paint().apply {
+                            textSize = 15f
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        }
+
+                        var y = 55f
+
+                        canvas.drawText("MATERIALI UTILIZZATI", 40f, y, titolo)
+                        y += 40f
+                        canvas.drawText("CANTIERE: $nomeCantiere", 40f, y, grassetto)
+                        y += 25f
+
+                        val data = java.text.SimpleDateFormat(
+                            "dd/MM/yyyy",
+                            java.util.Locale.ITALIAN
+                        ).format(java.util.Date())
+
+                        canvas.drawText("DATA STAMPA: $data", 40f, y, testo)
+                        y += 40f
+
+                        canvas.drawText("MATERIALE", 40f, y, grassetto)
+                        canvas.drawText("QUANTITÀ", 450f, y, grassetto)
+                        y += 25f
+
+                        totaliPdf.forEach { (chiave, quantita) ->
+                            canvas.drawText(
+                                chiave.replace("_", " "),
+                                40f,
+                                y,
+                                testo
+                            )
+                            canvas.drawText(
+                                formatta(quantita),
+                                450f,
+                                y,
+                                testo
+                            )
+                            y += 24f
+                        }
+
+                        pdf.finishPage(pagina)
+
+                        val file = java.io.File(
+                            cacheDir,
+                            "materiali_utilizzati.pdf"
+                        )
+
+                        pdf.writeTo(
+                            java.io.FileOutputStream(file)
+                        )
+                        pdf.close()
+
+                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                            this,
+                            "${packageName}.fileprovider",
+                            file
+                        )
+
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "application/pdf")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+
+                        startActivity(intent)
+                    }
+                    .addOnFailureListener {
+                        Toast.makeText(
+                            this,
+                            "Errore nel recupero dei materiali",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+            }
+    }
+
     private fun prelevaMagazzino(
         cantiereId: String,
         cantiere: Cantiere
@@ -3553,6 +3705,8 @@ class MainActivity : AppCompatActivity() {
                 mapOf(
                     "materiale" to descrizione,
                     "quantita" to quantita,
+                    "quantitaPortata" to quantita,
+                    "quantitaUtilizzata" to 0.0,
                     "nota" to nota,
                     "timestamp" to FieldValue.serverTimestamp(),
                     "userId" to (auth.currentUser?.uid ?: "")
@@ -3589,6 +3743,174 @@ class MainActivity : AppCompatActivity() {
             }
     }
 
+
+    private fun gestisciPrelievo(
+        cantiereId: String,
+        prelievoId: String,
+        descrizione: String,
+        quantitaPortata: Double
+    ) {
+        val campoUtilizzata = campo("Quantità utilizzata")
+
+        val info = TextView(this).apply {
+            text = "Materiale: $descrizione\nPortato in cantiere: ${formatta(quantitaPortata)}"
+            textSize = 16f
+            setPadding(20, 20, 20, 20)
+        }
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 10, 20, 10)
+            addView(info)
+            addView(campoUtilizzata)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("GESTISCI PRELIEVO")
+            .setView(layout)
+            .setNegativeButton("ANNULLA", null)
+            .setPositiveButton("CONFERMA", null)
+            .create()
+            .also { dialog ->
+
+                dialog.setOnShowListener {
+
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener {
+
+                            val utilizzata = campoUtilizzata.text.toString()
+                                .replace(",", ".")
+                                .toDoubleOrNull()
+
+                            if (
+                                utilizzata == null ||
+                                utilizzata < 0 ||
+                                utilizzata > quantitaPortata
+                            ) {
+                                Toast.makeText(
+                                    this,
+                                    "La quantità utilizzata deve essere tra 0 e ${formatta(quantitaPortata)}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                return@setOnClickListener
+                            }
+
+                            val rientro = quantitaPortata - utilizzata
+
+                            AlertDialog.Builder(this)
+                                .setTitle("CONFERMA")
+                                .setMessage(
+                                    "Portato: ${formatta(quantitaPortata)}\n" +
+                                    "Utilizzato: ${formatta(utilizzata)}\n" +
+                                    "Rientra in magazzino: ${formatta(rientro)}"
+                                )
+                                .setNegativeButton("ANNULLA", null)
+                                .setPositiveButton("CONFERMA") { _, _ ->
+                                    confermaUtilizzoPrelievo(
+                                        cantiereId,
+                                        prelievoId,
+                                        descrizione,
+                                        quantitaPortata,
+                                        utilizzata
+                                    )
+                                    dialog.dismiss()
+                                }
+                                .show()
+                        }
+                }
+
+                dialog.show()
+            }
+    }
+
+    private fun confermaUtilizzoPrelievo(
+        cantiereId: String,
+        prelievoId: String,
+        descrizione: String,
+        quantitaPortata: Double,
+        quantitaUtilizzata: Double
+    ) {
+        val quantitaRientro =
+            quantitaPortata - quantitaUtilizzata
+
+        val magazzinoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("magazzino")
+            .document(normalizzaMateriale(descrizione))
+
+        val prelievoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("cantieri")
+            .document(cantiereId)
+            .collection("prelieviMagazzino")
+            .document(prelievoId)
+
+        val movimentoRef = db.collection("aziende")
+            .document(azienda)
+            .collection("movimentiMagazzino")
+            .document()
+
+        db.runTransaction { transaction ->
+
+            if (quantitaRientro > 0) {
+                val magazzino =
+                    transaction.get(magazzinoRef)
+
+                val disponibile =
+                    magazzino.getDouble("quantitaDisponibile")
+                        ?: 0.0
+
+                transaction.set(
+                    magazzinoRef,
+                    mapOf(
+                        "descrizione" to descrizione,
+                        "quantitaDisponibile" to
+                            (disponibile + quantitaRientro),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+            }
+
+            transaction.update(
+                prelievoRef,
+                mapOf(
+                    "quantitaUtilizzata" to quantitaUtilizzata,
+                    "quantitaRientrata" to quantitaRientro,
+                    "chiuso" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+
+            transaction.set(
+                movimentoRef,
+                mapOf(
+                    "tipo" to "RIENTRO_CANTIERE",
+                    "materiale" to descrizione,
+                    "quantita" to quantitaRientro,
+                    "quantitaUtilizzata" to quantitaUtilizzata,
+                    "cantiereId" to cantiereId,
+                    "timestamp" to FieldValue.serverTimestamp(),
+                    "userId" to (auth.currentUser?.uid ?: "")
+                )
+            )
+        }
+            .addOnSuccessListener {
+                Toast.makeText(
+                    this,
+                    "${formatta(quantitaUtilizzata)} $descrizione utilizzati. " +
+                        "${formatta(quantitaRientro)} rientrati in magazzino.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    this,
+                    it.message ?: "Errore nella chiusura del prelievo",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
 
     private fun eliminaPrelievo(
         cantiereId: String,
@@ -3702,8 +4024,63 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#FFC400"))
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(20))
+            setPadding(0, dp(8), 0, dp(12))
         })
+
+        val stampa = Button(this).apply {
+            text = "🖨️  STAMPA MATERIALI UTILIZZATI"
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFFFC400.toInt())
+                cornerRadius = dp(13).toFloat()
+            }
+
+            setOnClickListener {
+                generaPdfMaterialiUtilizzati(cantiereId)
+            }
+        }
+
+        contenuto.addView(
+            stampa,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(50)
+            ).apply {
+                bottomMargin = dp(12)
+            }
+        )
+
+        val prelieviTitolo = TextView(this).apply {
+            text = "📦  PRELIEVI DAL MAGAZZINO"
+            textSize = 20f
+            setTextColor(Color.parseColor("#FFC400"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(8))
+        }
+
+        val prelieviLista = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        contenuto.addView(
+            prelieviTitolo,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        contenuto.addView(
+            prelieviLista,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(10)
+            }
+        )
 
         val scroll = ScrollView(this).apply {
             clipToPadding = false
@@ -3888,10 +4265,111 @@ class MainActivity : AppCompatActivity() {
                 .get()
                 .addOnSuccessListener { prelievi ->
 
+                    prelieviLista.removeAllViews()
+
                     prelievi.documents.forEach { doc ->
+                        val descrizione = doc.getString("materiale") ?: ""
+                        val portata =
+                            doc.getDouble("quantitaPortata")
+                                ?: (doc.getDouble("quantita") ?: 0.0)
+                        val utilizzata =
+                            doc.getDouble("quantitaUtilizzata") ?: 0.0
+                        val rientrata =
+                            doc.getDouble("quantitaRientrata")
+                                ?: (portata - utilizzata)
+                        val chiuso =
+                            doc.getBoolean("chiuso") ?: false
+
+                        val card = LinearLayout(this).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setPadding(
+                                dp(16),
+                                dp(14),
+                                dp(16),
+                                dp(14)
+                            )
+
+                            background =
+                                android.graphics.drawable.GradientDrawable().apply {
+                                    setColor(0xDD242424.toInt())
+                                    setStroke(
+                                        dp(1),
+                                        0x9966BB6A.toInt()
+                                    )
+                                    cornerRadius = dp(13).toFloat()
+                                }
+
+                            elevation = dp(3).toFloat()
+                        }
+
+                        card.addView(TextView(this).apply {
+                            text = descrizione
+                            textSize = 18f
+                            setTextColor(Color.WHITE)
+                            setTypeface(
+                                null,
+                                android.graphics.Typeface.BOLD
+                            )
+                        })
+
+                        card.addView(TextView(this).apply {
+                            text =
+                                "Portato: ${formatta(portata)}\n" +
+                                "Utilizzato: ${formatta(utilizzata)}\n" +
+                                "Da rientrare: ${formatta(rientrata)}"
+                            textSize = 15f
+                            setTextColor(Color.WHITE)
+                            setPadding(0, dp(6), 0, dp(8))
+                        })
+
+                        if (!chiuso) {
+                            card.addView(Button(this).apply {
+                                text = "📦  GESTISCI PRELIEVO"
+                                setTextColor(Color.BLACK)
+                                setTypeface(
+                                    null,
+                                    android.graphics.Typeface.BOLD
+                                )
+                                background =
+                                    android.graphics.drawable.GradientDrawable().apply {
+                                        setColor(0xFFFFC400.toInt())
+                                        cornerRadius = dp(10).toFloat()
+                                    }
+
+                                setOnClickListener {
+                                    gestisciPrelievo(
+                                        cantiereId,
+                                        doc.id,
+                                        descrizione,
+                                        portata
+                                    )
+                                }
+                            })
+                        } else {
+                            card.addView(TextView(this).apply {
+                                text = "✓ PRELIEVO CHIUSO"
+                                textSize = 14f
+                                setTextColor(0xFF66BB6A.toInt())
+                                setTypeface(
+                                    null,
+                                    android.graphics.Typeface.BOLD
+                                )
+                            })
+                        }
+
+                        prelieviLista.addView(
+                            card,
+                            LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                bottomMargin = dp(10)
+                            }
+                        )
+
                         aggiungiMateriale(
-                            doc.getString("materiale") ?: "",
-                            doc.getDouble("quantita") ?: 0.0
+                            descrizione,
+                            utilizzata
                         )
                     }
 
